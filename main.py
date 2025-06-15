@@ -1,111 +1,132 @@
-import csv
-from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+import pandas as pd
+import dash
+import dash_bootstrap_components as dbc
+from dash import html, dcc
+import plotly.express as px
 
-# File path for the CSV file
+# Path to CSV
 CSV_FILE = 'pokemon_dashboard.csv'
 
-def load_csv(file_path):
-    """Load data from the CSV file."""
-    with open(file_path, mode='r', newline='', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
-        return list(reader)
+# Load and preprocess data
+def load_data():
+    df = pd.read_csv(CSV_FILE)
+    # Convert playtime to minutes
+    df[['hours', 'minutes']] = df['Playtime'].str.split(':', expand=True).astype(int)
+    df['Playtime_minutes'] = df['hours'] * 60 + df['minutes']
+    return df
 
-def calculate_statistics(data):
-    """Calculate basic and derived statistics."""
-    total_entries = len(data)
-    unique_games = len(set(row['Game'] for row in data))
-    total_playtime = sum(int(row['Playtime'].split(':')[0]) for row in data)
-    avg_playtime = total_playtime / total_entries if total_entries > 0 else 0
-    avg_pokedex_caught = sum(int(row['Pokedex Caught']) for row in data) / total_entries if total_entries > 0 else 0
-    return {
-        'total_entries': total_entries,
-        'unique_games': unique_games,
-        'total_playtime': total_playtime,
-        'avg_playtime': avg_playtime,
-        'avg_pokedex_caught': avg_pokedex_caught
-    }
+df = load_data()
 
-def add_new_entry(file_path):
-    """Add a new entry to the CSV file."""
-    new_entry = {
-        'Game': simpledialog.askstring("Input", "Game:"),
-        'Platform': simpledialog.askstring("Input", "Platform:"),
-        'Playtime': simpledialog.askstring("Input", "Playtime (hh:mm):"),
-        'Battle Style': simpledialog.askstring("Input", "Battle Style:"),
-        'Date': datetime.now().strftime('%m/%d/%Y'),
-        'Starter': simpledialog.askstring("Input", "Starter:"),
-        'Pokedex Caught': simpledialog.askstring("Input", "Pokedex Caught:"),
-        'Pokedex Seen': simpledialog.askstring("Input", "Pokedex Seen:"),
-        'Pokemon in Box': simpledialog.askstring("Input", "Pokemon in Box:"),
-        'Money': simpledialog.askstring("Input", "Money:"),
-        'Player Name': simpledialog.askstring("Input", "Player Name:"),
-        'Legendaries Caught': simpledialog.askstring("Input", "Legendaries Caught:"),
-        'Shinies Caught': simpledialog.askstring("Input", "Shinies Caught:"),
-        'Fun Rating': simpledialog.askstring("Input", "Fun Rating:"),
-        'Team Favorability': simpledialog.askstring("Input", "Team Favorability:"),
-        'Notes': simpledialog.askstring("Input", "Notes:"),
-    }
-    with open(file_path, mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=new_entry.keys())
-        writer.writerow(new_entry)
-    messagebox.showinfo("Success", "New entry added successfully!")
+# Summary statistics
+total_entries = len(df)
+unique_games = df['Game'].nunique()
+total_playtime_hours = df['Playtime_minutes'].sum() / 60
+avg_playtime_hours = df['Playtime_minutes'].mean() / 60
 
-def update_statistics(summary_label, detailed_label, data):
-    """Update the statistics displayed on the dashboard."""
-    stats = calculate_statistics(data)
-    summary_label.config(text=(
-        f"Total Entries: {stats['total_entries']}\n"
-        f"Unique Games: {stats['unique_games']}\n"
-        f"Total Playtime: {stats['total_playtime']} hours"
-    ))
-    detailed_label.config(text=(
-        f"Average Playtime: {stats['avg_playtime']:.2f} hours\n"
-        f"Average Pokedex Caught: {stats['avg_pokedex_caught']:.2f}"
-    ))
+# Averages for numeric fields
+numeric_cols = [
+    'Pokedex Caught', 'Pokedex Seen', 'Pokemon in Box', 'Money',
+    'Legendaries Caught', 'Shinies Caught', 'Fun Rating', 'Team Favorability'
+]
+avg_stats = df[numeric_cols].mean().round(2).to_dict()
 
-def main():
-    data = load_csv(CSV_FILE)
+# Categorical percentage distributions
+cat_vars = ['Platform', 'Battle Style', 'Starter']
+cat_perc = {
+    col: (df[col].value_counts(normalize=True) * 100).round(2)
+    for col in cat_vars
+}
 
-    # Create the main window
-    root = tk.Tk()
-    root.title("Pokemon Dashboard")
-    root.geometry("500x400")
+# Plotly figures
+platform_fig = px.bar(
+    x=cat_perc['Platform'].index,
+    y=cat_perc['Platform'].values,
+    labels={'x': 'Platform', 'y': 'Percentage'},
+    title='Platform Distribution (%)'
+)
+battle_fig = px.bar(
+    x=cat_perc['Battle Style'].index,
+    y=cat_perc['Battle Style'].values,
+    labels={'x': 'Battle Style', 'y': 'Percentage'},
+    title='Battle Style Distribution (%)'
+)
+starter_fig = px.bar(
+    x=cat_perc['Starter'].index,
+    y=cat_perc['Starter'].values,
+    labels={'x': 'Starter', 'y': 'Percentage'},
+    title='Starter Distribution (%)'
+)
 
-    # Create frames for sections
-    summary_frame = ttk.LabelFrame(root, text="Summary Statistics", padding=(10, 10))
-    summary_frame.pack(fill="x", padx=10, pady=5)
+# Initialize Dash app
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
-    detailed_frame = ttk.LabelFrame(root, text="Detailed Statistics", padding=(10, 10))
-    detailed_frame.pack(fill="x", padx=10, pady=5)
+# App layout
+app.layout = dbc.Container(
+    [
+        html.H1('Pokémon Dashboard', className='my-4'),
 
-    actions_frame = ttk.Frame(root, padding=(10, 10))
-    actions_frame.pack(fill="x", padx=10, pady=5)
+        # Summary statistics
+        html.H2('Summary Statistics'),
+        dbc.Row([
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H5('Total Entries', className='card-title'),
+                html.P(f"{total_entries}", className='card-text')
+            ])]), width=4),
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H5('Unique Games', className='card-title'),
+                html.P(f"{unique_games}", className='card-text')
+            ])]), width=4),
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H5('Total Playtime (hrs)', className='card-title'),
+                html.P(f"{total_playtime_hours:.2f}", className='card-text')
+            ])]), width=4),
+        ], className='mb-4'),
 
-    # Summary statistics label
-    summary_label = ttk.Label(summary_frame, text="", justify=tk.LEFT)
-    summary_label.pack(anchor="w")
+        # Averages section
+        html.H2('Average Statistics'),
+        dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H5('Avg Playtime (hrs)', className='card-title'),
+                html.P(f"{avg_playtime_hours:.2f}", className='card-text')
+            ])), width=3),
+            *[
+                dbc.Col(dbc.Card(dbc.CardBody([
+                    html.H5(f'Avg {col}', className='card-title'),
+                    html.P(f"{avg_stats[col]}", className='card-text')
+                ])), width=3)
+                for col in numeric_cols[:3]
+            ],
+        ]),
+        dbc.Row([
+            *[
+                dbc.Col(dbc.Card(dbc.CardBody([
+                    html.H5(f'Avg {col}', className='card-title'),
+                    html.P(f"{avg_stats[col]}", className='card-text')
+                ])), width=3)
+                for col in numeric_cols[3:6]
+            ],
+        ]),
+        dbc.Row([
+            *[
+                dbc.Col(dbc.Card(dbc.CardBody([
+                    html.H5(f'Avg {col}', className='card-title'),
+                    html.P(f"{avg_stats[col]}", className='card-text')
+                ])), width=3)
+                for col in numeric_cols[6:]
+            ],
+        ], className='mb-4'),
 
-    # Detailed statistics label
-    detailed_label = ttk.Label(detailed_frame, text="", justify=tk.LEFT)
-    detailed_label.pack(anchor="w")
+        # Categorical distributions
+        html.H2('Categorical Distributions'),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=platform_fig), width=4),
+            dbc.Col(dcc.Graph(figure=battle_fig), width=4),
+            dbc.Col(dcc.Graph(figure=starter_fig), width=4),
+        ]),
+    ],
+    fluid=True
+)
 
-    # Update statistics
-    update_statistics(summary_label, detailed_label, data)
-
-    # Add Entry button
-    def on_add_entry():
-        add_new_entry(CSV_FILE)
-        nonlocal data
-        data = load_csv(CSV_FILE)
-        update_statistics(summary_label, detailed_label, data)
-
-    add_entry_button = ttk.Button(actions_frame, text="Add New Entry", command=on_add_entry)
-    add_entry_button.pack(side="left", padx=5)
-
-    # Run the application
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
+# Run server
+if __name__ == '__main__':
+    app.run_server(debug=True)
